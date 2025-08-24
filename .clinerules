@@ -1,0 +1,39 @@
+# Project Guidelines
+
+## Code Structure & Quality
+- **Modular Design**: Generate code in distinct, logical modules with clear responsibilities for improved organization and collaboration.
+- **Clean Architecture**: Separate UI, business logic, and data access layers with explicit interfaces for maintainability.
+- **Meaningful Naming**: Use descriptive, domain-specific names for variables, functions, and classes to enhance readability.
+- **Error Handling**: Implement comprehensive error handling with informative messages and recovery strategies.
+
+## Development Patterns
+- **Responsive Design**: Implement responsive and adaptive design patterns for cross-device compatibility.
+- **Consistent Coding Style**: Follow uniform coding standards including indentation, naming conventions, and formatting for maintainable code.
+- **Performance Optimization**: Focus on optimizing application performance and scalability for better user experience.
+- **Microservices Architecture**: Consider microservices for complex applications to improve scalability and maintenance.
+
+## Security & Compliance
+- **Input Validation**: Thoroughly validate and sanitize all user inputs
+- **Security Best Practices**: Follow industry security standards to protect against common vulnerabilities.
+
+## Testing & Documentation
+- **Testing Standards**: Follow the standards below.
+  - Unit tests required for business logic
+  - Integration tests for API endpoints
+  - E2E tests for critical user flows
+- **End-to-End Testing**: Implement comprehensive testing strategies to ensure application reliability.
+- **Essential Documentation**: Include these key documents:
+  - **README**: High-level project overview, setup instructions, and quick start guide
+  - **Technical Design Document**: Implementation details, component designs, and API specifications
+  - **API Documentation**: Endpoints, request/response formats, and usage examples
+  - **Code Comments**: Inline explanations for complex logic and algorithms
+  - **User Guides**: Concise instructions for end-users
+- **Legal Compliance Documentation**: Include documentation on licensing, open-source usage, and regulatory compliance.
+- **Other Requirements**:
+  - Save 'README' in the project root but all other docs should be in 'docs/' folder.
+  - Keep 'README' in sync with new capabilities
+  - Update relevant documentation in '/docs' when modifying features
+  - Use conda environment and always create a new virtual environment per project
+  - Use config.yaml for any project-related config
+  - Use .env for sensitive configuration like api-key, etc.
+  - Use example code in examples/ for reference
