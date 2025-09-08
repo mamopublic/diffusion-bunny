@@ -266,3 +266,6 @@ tensorboard_logs/
 
 # CUDA cache
 .nv/
+
+# The movies and frames
+pipeline_data/

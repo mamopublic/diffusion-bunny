@@ -18,25 +18,33 @@ pipeline:
   
 # Input configuration
 input:
-  video_path: "./data/input/movie.mp4"
-  character_references_dir: "./data/input/characters"
+  # Project start point - where the pipeline operates
+  project_root: "./pipeline_data/sprite"
+  
+  # Directory structure within project root
+  movie_dir: "movie"              # Contains source movie files
+  frames_dir: "frames"            # Will be created for extracted frames
+  character_references_dir: "characters"  # Character reference images (optional)
+  
+  # Supported formats
   supported_video_formats: [".mp4", ".avi", ".mov", ".mkv", ".wmv"]
   supported_image_formats: [".jpg", ".jpeg", ".png", ".bmp"]
 
 # Stage 1: Frame Extraction
 extraction:
-  method: "keyframe"  # keyframe | interval
+  method: "uniform"  # uniform | interval | keyframe
+  target_frames: 4000  # Target number of frames to extract uniformly
   interval_seconds: 2.0  # Used when method is "interval"
   keyframe_threshold: 0.3  # Sensitivity for keyframe detection (0.1-1.0)
   output_format: "jpg"
   quality: 95  # JPEG quality (1-100)
-  max_frames: 1000  # Maximum frames to extract (null for no limit)
+  max_frames: null  # Maximum frames to extract (null for no limit)
   resize_width: null  # Resize frames to width (null to keep original)
   resize_height: null  # Resize frames to height (null to keep original)
 
 # Stage 2: Quality Filtering
 filtering:
-  blur_threshold: 0.3  # Minimum blur score to keep frame (0.0-1.0)
+  blur_threshold: 100.0  # Minimum Laplacian variance to keep frame (higher = sharper)
   batch_size: 10  # Number of frames to process in each batch
   keep_best_per_batch: true  # Keep only the best frame per batch
   min_batch_quality: 0.1  # Minimum quality to keep any frame from batch
@@ -45,13 +53,44 @@ filtering:
 
 # Stage 3: Character Detection
 detection:
-  face_detection_model: "hog"  # hog | cnn | mediapipe
-  similarity_threshold: 0.6  # Minimum similarity to match character (0.0-1.0)
-  max_faces_per_frame: 5  # Maximum faces to detect per frame
-  min_face_size: 50  # Minimum face size in pixels
+  # Face Detection Method Selection
+  face_detection_method: "yolo_anime"  # haar | yolo_anime
+  
+  # Haar Cascade Face Detection Settings
+  haar_scale_factor: 1.05  # How much the image size is reduced at each scale (more thorough)
+  haar_min_neighbors: 3   # How many neighbors each candidate rectangle should have to retain it (less strict)
+  haar_min_size: [20, 20] # Minimum possible face size [width, height] (smaller faces)
+  
+  # YOLOv8 Anime Face Detection Settings
+  yolo_anime:
+    model_repo: "Fuyucchi/yolov8_animeface"
+    model_file: "yolov8x6_animeface.pt"
+    confidence_threshold: 0.35  # Reduced from 0.5 to catch more faces
+    device: "auto"  # auto, cpu, cuda
+    cache_model: true
+  
+  # Character Recognition
+  feature_method: "sift"  # orb | sift | surf (SIFT is more accurate for faces)
+  similarity_threshold: 0.75  # Minimum similarity to match character (0.0-1.0) - increased for better precision
+  max_faces_per_frame: 15  # Maximum faces to detect per frame (increased from 10)
+  min_face_size: 25  # Minimum face size in pixels (reduced from 30)
   face_padding: 0.2  # Padding around detected face (0.0-1.0)
-  enable_face_landmarks: false  # Extract facial landmarks
+  
+  # Performance Settings
+  batch_size: 10  # Number of frames to process in each batch
   character_embedding_cache: true  # Cache character embeddings
+  
+  # Output
+  save_detected_faces: true  # Save detected faces for visual inspection
+  save_detected_frames: true  # Save full frames with face bounding boxes
+  save_character_matches_only: true  # Only save frames with character matches
+  
+  # Character visualization colors (BGR format for OpenCV)
+  character_colors:
+    ellie: [0, 255, 0]      # Green
+    elder: [0, 0, 255]      # Red
+    victoria: [255, 0, 0]   # Blue
+    default: [0, 255, 255]  # Yellow for unknown characters
 
 # Stage 4: Caption Generation
 captioning:
