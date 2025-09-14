@@ -15,6 +15,7 @@ from typing import Dict, List, Optional
 sys.path.append(str(Path(__file__).parent))
 
 from stage1_extraction.extractor import FrameExtractor
+from stage0_siamese.siamese_trainer import SiameseTrainer
 
 class Pipeline:
     """Main pipeline orchestrator"""
@@ -27,6 +28,7 @@ class Pipeline:
         
         # Available stages
         self.available_stages = {
+            "siamese": self.run_siamese,
             "extraction": self.run_extraction,
             "filtering": self.run_filtering,
             "detection": self.run_detection,
@@ -77,6 +79,32 @@ class Pipeline:
             
         self.logger.info(f"Project structure validated: {project_root}")
         return True
+    
+    def run_siamese(self) -> Dict:
+        """Run Stage 0: Siamese Network Training"""
+        self.logger.info("=== Stage 0: Siamese Network Training ===")
+        
+        # Check if Siamese training is enabled
+        siamese_config = self.config.get('siamese', {})
+        if not siamese_config.get('enabled', True):
+            self.logger.info("[SKIP] Siamese training disabled in configuration")
+            return {"success": True, "skipped": True, "reason": "Disabled in config"}
+        
+        try:
+            project_root = Path(self.config['input']['project_root'])
+            trainer = SiameseTrainer(self.config, project_root)
+            result = trainer.train()
+            
+            if result['success']:
+                self.logger.info(f"[SUCCESS] Siamese training completed: {result['final_val_accuracy']:.4f} validation accuracy")
+            else:
+                self.logger.error(f"[FAILED] Siamese training failed: {result['error']}")
+                
+            return result
+            
+        except Exception as e:
+            self.logger.error(f"Siamese training crashed: {str(e)}")
+            return {"success": False, "error": str(e)}
         
     def run_extraction(self) -> Dict:
         """Run Stage 1: Frame Extraction"""
@@ -167,7 +195,14 @@ class Pipeline:
         """Check if a stage can be resumed (has existing output)"""
         project_root = Path(self.config['input']['project_root'])
         
-        if stage == "extraction":
+        if stage == "siamese":
+            # Stage 0 outputs to project root/siamese
+            siamese_dir = project_root / "siamese"
+            model_weights = siamese_dir / "model_weights.pth"
+            embeddings_file = siamese_dir / "character_embeddings.pkl"
+            return siamese_dir.exists() and model_weights.exists() and embeddings_file.exists()
+        
+        elif stage == "extraction":
             # Stage 1 outputs to project root
             frames_dir = project_root / self.config['input']['frames_dir']
             metadata_file = project_root / "frames_metadata.json"

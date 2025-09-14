@@ -11,10 +11,10 @@ project:
 
 # Pipeline configuration
 pipeline:
-  stages: ["extraction", "filtering", "detection", "captioning"]
+  stages: ["siamese", "extraction", "filtering", "detection", "captioning"]
   force_rerun: false
   parallel_processing: false  # Set to true when stages support it
-  resume_from_stage: null  # null, extraction, filtering, detection, captioning, finetuning, inference
+  resume_from_stage: null  # null, siamese, extraction, filtering, detection, captioning, finetuning, inference
   
 # Input configuration
 input:
@@ -29,6 +29,51 @@ input:
   # Supported formats
   supported_video_formats: [".mp4", ".avi", ".mov", ".mkv", ".wmv"]
   supported_image_formats: [".jpg", ".jpeg", ".png", ".bmp"]
+
+# Stage 0: Siamese Network Training
+siamese:
+  enabled: true
+  backbone: "mobilenetv2"  # mobilenetv2, efficientnet-b0
+  embedding_dim: 128
+  
+  # Training configuration
+  training:
+    epochs: 50
+    batch_size: 32
+    learning_rate: 0.001
+    weight_decay: 1e-4
+    optimizer: "adam"  # adam, sgd
+    
+    # Learning rate scheduler
+    scheduler: "step"  # step, plateau
+    scheduler_step_size: 20
+    scheduler_gamma: 0.5
+    scheduler_patience: 10  # for plateau scheduler
+    
+    # Loss function
+    loss_type: "contrastive"  # contrastive, triplet
+    margin: 1.0
+    
+    # Data generation
+    pairs_per_epoch: 1000
+    positive_ratio: 0.5  # Ratio of positive pairs
+    val_split: 0.2
+    image_size: 224
+    num_workers: 4
+    
+    # Data augmentation
+    augmentation:
+      rotation_range: 15
+      brightness_range: 0.2
+      contrast_range: 0.2
+    
+    # Training device
+    device: "auto"  # auto, cpu, cuda
+  
+  # Inference configuration
+  similarity_threshold: 0.8
+  similarity_metric: "cosine"  # cosine, euclidean
+  cache_embeddings: true
 
 # Stage 1: Frame Extraction
 extraction:
