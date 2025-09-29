@@ -15,6 +15,14 @@ import logging
 import argparse
 import yaml
 from datetime import datetime
+from collections import defaultdict
+
+try:
+    import imagehash
+    from PIL import Image
+    IMAGEHASH_AVAILABLE = True
+except ImportError:
+    IMAGEHASH_AVAILABLE = False
 
 @dataclass
 class QualityMetrics:
@@ -63,6 +71,21 @@ class FrameFilter:
         self.min_batch_quality = config['filtering']['min_batch_quality']
         self.brightness_threshold = config['filtering']['brightness_threshold']
         self.contrast_threshold = config['filtering']['contrast_threshold']
+        
+        # Deduplication settings
+        dedup_config = config['filtering'].get('deduplication', {})
+        self.deduplication_enabled = dedup_config.get('enabled', False)
+        self.dedup_method = dedup_config.get('method', 'perceptual_hash')
+        self.similarity_threshold = dedup_config.get('similarity_threshold', 0.95)
+        self.hash_size = dedup_config.get('hash_size', 8)
+        self.keep_best_quality = dedup_config.get('keep_best_quality', True)
+        self.min_group_size = dedup_config.get('min_group_size', 2)
+        
+        # Check if imagehash is available for deduplication
+        if self.deduplication_enabled and not IMAGEHASH_AVAILABLE:
+            self.logger.warning("imagehash library not available. Install with: pip install imagehash")
+            self.logger.warning("Deduplication will be disabled")
+            self.deduplication_enabled = False
         
         # Handle run directory
         if resume_run_dir:
@@ -182,6 +205,124 @@ class FrameFilter:
             # Return all frames that passed filters
             return [frame for frame, _ in batch_results]
             
+    def calculate_perceptual_hash(self, image_path: str) -> Optional[str]:
+        """Calculate perceptual hash for an image"""
+        if not IMAGEHASH_AVAILABLE:
+            return None
+            
+        try:
+            # Load image using PIL
+            pil_image = Image.open(image_path)
+            
+            # Calculate perceptual hash
+            if self.hash_size == 16:
+                hash_value = imagehash.phash(pil_image, hash_size=16)
+            else:
+                hash_value = imagehash.phash(pil_image, hash_size=8)
+                
+            return str(hash_value)
+        except Exception as e:
+            self.logger.warning(f"Failed to calculate hash for {image_path}: {e}")
+            return None
+    
+    def calculate_hash_similarity(self, hash1: str, hash2: str) -> float:
+        """Calculate similarity between two perceptual hashes"""
+        if not hash1 or not hash2:
+            return 0.0
+            
+        try:
+            # Convert string hashes back to imagehash objects
+            h1 = imagehash.hex_to_hash(hash1)
+            h2 = imagehash.hex_to_hash(hash2)
+            
+            # Calculate Hamming distance
+            hamming_distance = h1 - h2
+            
+            # Convert to similarity (0.0 = identical, 1.0 = completely different)
+            max_distance = len(hash1) * 4  # Each hex char represents 4 bits
+            similarity = 1.0 - (hamming_distance / max_distance)
+            
+            return similarity
+        except Exception as e:
+            self.logger.warning(f"Failed to calculate hash similarity: {e}")
+            return 0.0
+    
+    def deduplicate_frames(self, filtered_frames: List[FilteredFrame]) -> List[FilteredFrame]:
+        """Remove near-duplicate frames using perceptual hashing"""
+        if not self.deduplication_enabled or len(filtered_frames) < self.min_group_size:
+            return filtered_frames
+            
+        self.logger.info(f"Starting deduplication of {len(filtered_frames)} frames...")
+        
+        # Calculate hashes for all frames
+        frame_hashes = {}
+        frames_with_quality = {}
+        
+        for frame in filtered_frames:
+            frame_path = self.project_root / frame.path
+            
+            # Calculate hash
+            hash_value = self.calculate_perceptual_hash(str(frame_path))
+            if hash_value:
+                frame_hashes[frame.id] = hash_value
+                
+                # Calculate quality metrics for ranking
+                if self.keep_best_quality:
+                    quality_metrics = self.calculate_quality_metrics(str(frame_path))
+                    frames_with_quality[frame.id] = quality_metrics
+        
+        # Group similar frames
+        similarity_groups = []
+        processed_frames = set()
+        
+        for frame_id, hash_value in frame_hashes.items():
+            if frame_id in processed_frames:
+                continue
+                
+            # Find all similar frames
+            similar_group = [frame_id]
+            processed_frames.add(frame_id)
+            
+            for other_frame_id, other_hash in frame_hashes.items():
+                if other_frame_id in processed_frames:
+                    continue
+                    
+                similarity = self.calculate_hash_similarity(hash_value, other_hash)
+                
+                if similarity >= self.similarity_threshold:
+                    similar_group.append(other_frame_id)
+                    processed_frames.add(other_frame_id)
+            
+            similarity_groups.append(similar_group)
+        
+        # Select best frame from each group
+        deduplicated_frames = []
+        frames_dict = {frame.id: frame for frame in filtered_frames}
+        
+        removed_count = 0
+        
+        for group in similarity_groups:
+            if len(group) >= self.min_group_size:
+                # Multiple similar frames - select the best one
+                if self.keep_best_quality and all(fid in frames_with_quality for fid in group):
+                    # Sort by quality (blur score as primary metric)
+                    best_frame_id = max(group, key=lambda fid: frames_with_quality[fid].blur_score)
+                else:
+                    # Just keep the first one
+                    best_frame_id = group[0]
+                
+                deduplicated_frames.append(frames_dict[best_frame_id])
+                removed_count += len(group) - 1
+                
+                self.logger.debug(f"Group of {len(group)} similar frames, kept: {best_frame_id}")
+            else:
+                # Single frame or small group - keep all
+                for frame_id in group:
+                    deduplicated_frames.append(frames_dict[frame_id])
+        
+        self.logger.info(f"Deduplication complete: removed {removed_count} duplicate frames, kept {len(deduplicated_frames)} unique frames")
+        return deduplicated_frames
+    
     def filter_frames(self) -> List[FilteredFrame]:
         """Filter all frames and return results"""
         # Load frame metadata
@@ -210,6 +351,11 @@ class FrameFilter:
                 self.logger.info(f"Processed {batch_num}/{total_batches} batches, kept {len(filtered_frames)} frames so far")
                 
         self.logger.info(f"Filtering complete: kept {len(filtered_frames)} out of {len(frames_metadata)} frames ({len(filtered_frames)/len(frames_metadata)*100:.1f}%)")
+        
+        # Apply deduplication if enabled
+        if self.deduplication_enabled:
+            filtered_frames = self.deduplicate_frames(filtered_frames)
+        
         return filtered_frames
         
     def save_filtered_results(self, filtered_frames: List[FilteredFrame]) -> Path:

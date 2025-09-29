@@ -69,14 +69,30 @@ class SiameseDataGenerator(Dataset):
         character_images = {}
         supported_formats = ['.jpg', '.jpeg', '.png', '.bmp']
         
-        for image_file in self.characters_dir.iterdir():
-            if image_file.suffix.lower() in supported_formats:
-                character_name = image_file.stem
-                
-                if character_name not in character_images:
+        # Check if we have subdirectories (nested structure) or direct files
+        has_subdirs = any(item.is_dir() for item in self.characters_dir.iterdir())
+        
+        if has_subdirs:
+            # Handle nested directory structure: characters/character_name/images
+            for character_dir in self.characters_dir.iterdir():
+                if character_dir.is_dir():
+                    character_name = character_dir.name
                     character_images[character_name] = []
-                
-                character_images[character_name].append(str(image_file))
+                    
+                    # Load all images from this character's directory
+                    for image_file in character_dir.iterdir():
+                        if image_file.is_file() and image_file.suffix.lower() in supported_formats:
+                            character_images[character_name].append(str(image_file))
+        else:
+            # Handle flat directory structure: characters/character_name.jpg
+            for image_file in self.characters_dir.iterdir():
+                if image_file.is_file() and image_file.suffix.lower() in supported_formats:
+                    character_name = image_file.stem
+                    
+                    if character_name not in character_images:
+                        character_images[character_name] = []
+                    
+                    character_images[character_name].append(str(image_file))
         
         # Filter out characters with no images
         character_images = {name: images for name, images in character_images.items() if images}

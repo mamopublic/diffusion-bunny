@@ -273,15 +273,30 @@ class CharacterEmbeddingDatabase:
         supported_formats = ['.jpg', '.jpeg', '.png', '.bmp']
         character_images = {}
         
-        # Group images by character
-        for image_file in self.characters_dir.iterdir():
-            if image_file.suffix.lower() in supported_formats:
-                character_name = image_file.stem
-                
-                if character_name not in character_images:
+        # Check if we have subdirectories (nested structure) or direct files
+        has_subdirs = any(item.is_dir() for item in self.characters_dir.iterdir())
+        
+        if has_subdirs:
+            # Handle nested directory structure: characters/character_name/images
+            for character_dir in self.characters_dir.iterdir():
+                if character_dir.is_dir():
+                    character_name = character_dir.name
                     character_images[character_name] = []
-                
-                character_images[character_name].append(image_file)
+                    
+                    # Load all images from this character's directory
+                    for image_file in character_dir.iterdir():
+                        if image_file.is_file() and image_file.suffix.lower() in supported_formats:
+                            character_images[character_name].append(image_file)
+        else:
+            # Handle flat directory structure: characters/character_name.jpg
+            for image_file in self.characters_dir.iterdir():
+                if image_file.is_file() and image_file.suffix.lower() in supported_formats:
+                    character_name = image_file.stem
+                    
+                    if character_name not in character_images:
+                        character_images[character_name] = []
+                    
+                    character_images[character_name].append(image_file)
         
         # Extract embeddings for each character
         for character_name, image_files in character_images.items():

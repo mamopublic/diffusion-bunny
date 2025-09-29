@@ -87,14 +87,23 @@ extraction:
   resize_width: null  # Resize frames to width (null to keep original)
   resize_height: null  # Resize frames to height (null to keep original)
 
-# Stage 2: Quality Filtering
+# Stage 2: Quality Filtering + Deduplication
 filtering:
-  blur_threshold: 100.0  # Minimum Laplacian variance to keep frame (higher = sharper)
+  blur_threshold: 50.0  # Minimum Laplacian variance to keep frame (lower = accept more frames)
   batch_size: 10  # Number of frames to process in each batch
-  keep_best_per_batch: true  # Keep only the best frame per batch
-  min_batch_quality: 0.1  # Minimum quality to keep any frame from batch
-  brightness_threshold: [20, 235]  # [min, max] brightness levels (0-255)
-  contrast_threshold: 0.1  # Minimum contrast score (0.0-1.0)
+  keep_best_per_batch: false  # Keep all frames that meet quality thresholds
+  min_batch_quality: 0.05  # Lower minimum quality threshold
+  brightness_threshold: [10, 245]  # Wider brightness range [min, max] brightness levels (0-255)
+  contrast_threshold: 0.05  # Lower contrast threshold (0.0-1.0)
+  
+  # Deduplication settings (Stage 2.5)
+  deduplication:
+    enabled: true  # Enable perceptual hash deduplication
+    method: "perceptual_hash"  # perceptual_hash, temporal, clustering
+    similarity_threshold: 0.95  # Remove frames >95% similar (0.0-1.0)
+    hash_size: 8  # pHash precision (8 or 16)
+    keep_best_quality: true  # Keep highest quality frame from similar group
+    min_group_size: 2  # Minimum frames in group to trigger deduplication
 
 # Stage 3: Character Detection
 detection:
@@ -108,15 +117,22 @@ detection:
   
   # YOLOv8 Anime Face Detection Settings
   yolo_anime:
-    model_repo: "Fuyucchi/yolov8_animeface"
-    model_file: "yolov8x6_animeface.pt"
+    model_repo: "arnabdhar/YOLOv8-Face-Detection"
+    model_file: "model.pt"
     confidence_threshold: 0.35  # Reduced from 0.5 to catch more faces
     device: "auto"  # auto, cpu, cuda
     cache_model: true
   
   # Character Recognition
-  feature_method: "sift"  # orb | sift | surf (SIFT is more accurate for faces)
-  similarity_threshold: 0.75  # Minimum similarity to match character (0.0-1.0) - increased for better precision
+  feature_method: "siamese"  # orb | sift | surf | siamese (Siamese network for anime characters)
+  similarity_threshold: 0.8  # Minimum similarity to match character (0.0-1.0)
+  
+  # Siamese network settings (when feature_method is "siamese")
+  siamese:
+    model_path: "pipeline_data/sprite/siamese/model_weights.pth"  # Path to trained Siamese model
+    similarity_metric: "cosine"  # cosine | euclidean
+    device: "auto"  # auto, cpu, cuda
+    cache_embeddings: true  # Cache character embeddings for faster inference
   max_faces_per_frame: 15  # Maximum faces to detect per frame (increased from 10)
   min_face_size: 25  # Minimum face size in pixels (reduced from 30)
   face_padding: 0.2  # Padding around detected face (0.0-1.0)
@@ -128,7 +144,7 @@ detection:
   # Output
   save_detected_faces: true  # Save detected faces for visual inspection
   save_detected_frames: true  # Save full frames with face bounding boxes
-  save_character_matches_only: true  # Only save frames with character matches
+  save_character_matches_only: false  # Save all frames with detections, not just character matches
   
   # Character visualization colors (BGR format for OpenCV)
   character_colors:

@@ -103,17 +103,35 @@ class SiameseTrainer:
         
         supported_formats = ['.jpg', '.jpeg', '.png', '.bmp']
         character_files = []
+        character_names = set()
         
-        for ext in supported_formats:
-            character_files.extend(self.characters_dir.glob(f"*{ext}"))
-            character_files.extend(self.characters_dir.glob(f"*{ext.upper()}"))
+        # Check if we have subdirectories (nested structure) or direct files
+        has_subdirs = any(item.is_dir() for item in self.characters_dir.iterdir())
+        
+        if has_subdirs:
+            # Handle nested directory structure: characters/character_name/images
+            for character_dir in self.characters_dir.iterdir():
+                if character_dir.is_dir():
+                    character_name = character_dir.name
+                    character_names.add(character_name)
+                    
+                    # Count images in this character's directory
+                    for image_file in character_dir.iterdir():
+                        if image_file.is_file() and image_file.suffix.lower() in supported_formats:
+                            character_files.append(image_file)
+        else:
+            # Handle flat directory structure: characters/character_name.jpg
+            for ext in supported_formats:
+                character_files.extend(self.characters_dir.glob(f"*{ext}"))
+                character_files.extend(self.characters_dir.glob(f"*{ext.upper()}"))
+            
+            # Count unique characters from filenames
+            character_names = set(f.stem for f in character_files)
         
         if len(character_files) < 2:
             self.logger.error(f"Need at least 2 character reference images, found {len(character_files)}")
             return False
         
-        # Count unique characters
-        character_names = set(f.stem for f in character_files)
         if len(character_names) < 2:
             self.logger.error(f"Need at least 2 different characters, found {len(character_names)}")
             return False
@@ -134,18 +152,21 @@ class SiameseTrainer:
         
         # Create optimizer
         optimizer_type = self.training_config.get('optimizer', 'adam')
+        weight_decay = float(self.training_config.get('weight_decay', 1e-4))
+        
         if optimizer_type.lower() == 'adam':
             self.optimizer = optim.Adam(
                 self.model.parameters(),
                 lr=self.learning_rate,
-                weight_decay=self.training_config.get('weight_decay', 1e-4)
+                weight_decay=weight_decay
             )
         elif optimizer_type.lower() == 'sgd':
+            momentum = float(self.training_config.get('momentum', 0.9))
             self.optimizer = optim.SGD(
                 self.model.parameters(),
                 lr=self.learning_rate,
-                momentum=self.training_config.get('momentum', 0.9),
-                weight_decay=self.training_config.get('weight_decay', 1e-4)
+                momentum=momentum,
+                weight_decay=weight_decay
             )
         else:
             raise ValueError(f"Unsupported optimizer: {optimizer_type}")

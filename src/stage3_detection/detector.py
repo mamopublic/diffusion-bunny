@@ -24,6 +24,21 @@ try:
 except ImportError:
     YOLO_AVAILABLE = False
 
+try:
+    import sys
+    from pathlib import Path
+    # Add the project root to the path for absolute imports
+    project_root = Path(__file__).parent.parent.parent
+    if str(project_root) not in sys.path:
+        sys.path.insert(0, str(project_root))
+    
+    from src.stage0_siamese.embedding_extractor import EmbeddingExtractor, CharacterEmbeddingDatabase
+    from src.stage0_siamese.siamese_network import SiameseNetwork
+    SIAMESE_AVAILABLE = True
+except ImportError as e:
+    SIAMESE_AVAILABLE = False
+    SIAMESE_IMPORT_ERROR = str(e)
+
 @dataclass
 class DetectedFace:
     """Represents a detected face in a frame"""
@@ -74,16 +89,27 @@ class CharacterDatabase:
         supported_formats = ['.jpg', '.jpeg', '.png', '.bmp']
         character_files = []
         
+        # First try direct files in characters directory
         for ext in supported_formats:
             character_files.extend(self.characters_dir.glob(f"*{ext}"))
             character_files.extend(self.characters_dir.glob(f"*{ext.upper()}"))
+        
+        # If no direct files found, look in subdirectories
+        if not character_files:
+            for ext in supported_formats:
+                character_files.extend(self.characters_dir.glob(f"*/*{ext}"))
+                character_files.extend(self.characters_dir.glob(f"*/*{ext.upper()}"))
         
         if not character_files:
             raise FileNotFoundError(f"No character reference images found in {self.characters_dir}")
         
         for char_file in character_files:
-            character_name = char_file.stem
-            self.logger.info(f"Processing character: {character_name}")
+            # If file is in subdirectory, use parent directory name as character name
+            if char_file.parent != self.characters_dir:
+                character_name = char_file.parent.name
+            else:
+                character_name = char_file.stem
+            self.logger.info(f"Processing character: {character_name} from {char_file}")
             
             # Load image
             image = cv2.imread(str(char_file))
@@ -389,6 +415,136 @@ class CharacterRecognizer:
         
         return character_matches
 
+
+class SiameseCharacterRecognizer:
+    """Siamese network-based character recognition"""
+    
+    def __init__(self, characters_dir: Path, config: Dict, similarity_threshold: float = 0.8):
+        self.characters_dir = characters_dir
+        self.config = config
+        self.similarity_threshold = similarity_threshold
+        self.logger = logging.getLogger(__name__)
+        
+        if not SIAMESE_AVAILABLE:
+            raise ImportError("Siamese network dependencies not available. Install PyTorch and ensure Siamese modules are accessible.")
+        
+        # Extract Siamese configuration
+        siamese_config = config['detection'].get('siamese', {})
+        self.model_path = Path(siamese_config.get('model_path', 'pipeline_data/sprite/siamese/model_weights.pth'))
+        self.similarity_metric = siamese_config.get('similarity_metric', 'cosine')
+        self.device = siamese_config.get('device', 'auto')
+        self.cache_embeddings = siamese_config.get('cache_embeddings', True)
+        
+        # Determine device
+        if self.device == 'auto':
+            self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        
+        self.logger.info(f"Initializing Siamese character recognizer on device: {self.device}")
+        
+        # Initialize components
+        self.embedding_extractor = None
+        self.character_embeddings = {}
+        self.character_database = None
+        
+        self._initialize_siamese_components()
+    
+    def _initialize_siamese_components(self):
+        """Initialize Siamese network components"""
+        try:
+            # Create embedding extractor
+            self.embedding_extractor = EmbeddingExtractor(
+                model_path=self.model_path,
+                config=self.config,
+                device=self.device
+            )
+            
+            # Create character embedding database
+            self.character_database = CharacterEmbeddingDatabase(
+                characters_dir=self.characters_dir,
+                extractor=self.embedding_extractor
+            )
+            
+            # Try to load cached embeddings
+            cache_path = self.characters_dir.parent / "siamese" / "character_embeddings.pkl"
+            
+            if self.cache_embeddings and cache_path.exists():
+                if self.character_database.load_database(cache_path):
+                    self.logger.info("Loaded character embeddings from cache")
+                    self.character_embeddings = self.character_database.get_embeddings()
+                else:
+                    self._build_character_embeddings(cache_path)
+            else:
+                self._build_character_embeddings(cache_path if self.cache_embeddings else None)
+            
+            self.logger.info(f"Siamese character recognizer initialized with {len(self.character_embeddings)} characters")
+            
+        except Exception as e:
+            self.logger.error(f"Failed to initialize Siamese components: {e}")
+            raise
+    
+    def _build_character_embeddings(self, cache_path: Optional[Path] = None):
+        """Build character embeddings from reference images"""
+        self.logger.info("Building character embeddings...")
+        
+        # Build the database
+        self.character_embeddings = self.character_database.build_database()
+        
+        # Save to cache if requested
+        if cache_path:
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            self.character_database.save_database(cache_path)
+    
+    def recognize_character(self, face_image: np.ndarray) -> List[CharacterMatch]:
+        """Recognize character in face image using Siamese network"""
+        try:
+            # Extract embedding for the face
+            face_embedding = self.embedding_extractor.extract_embedding(face_image)
+            
+            # Find best match
+            best_character, best_similarity = self.embedding_extractor.find_best_match(
+                query_embedding=face_embedding,
+                reference_embeddings=self.character_embeddings,
+                threshold=self.similarity_threshold
+            )
+            
+            character_matches = []
+            
+            if best_character is not None:
+                # Create character match
+                character_match = CharacterMatch(
+                    character_name=best_character,
+                    confidence=best_similarity,
+                    match_count=1  # For Siamese, we use 1 as it's a single embedding comparison
+                )
+                character_matches.append(character_match)
+                
+                self.logger.debug(f"Character match: {best_character} (confidence: {best_similarity:.3f})")
+            
+            return character_matches
+            
+        except Exception as e:
+            self.logger.error(f"Failed to recognize character with Siamese network: {e}")
+            return []
+
+
+def create_character_recognizer(characters_dir: Path, config: Dict, similarity_threshold: float) -> Union[CharacterRecognizer, SiameseCharacterRecognizer]:
+    """Factory function to create character recognizer based on configuration"""
+    feature_method = config['detection'].get('feature_method', 'sift')
+    logger = logging.getLogger(__name__)
+    
+    if feature_method == 'siamese':
+        logger.info("Creating Siamese character recognizer")
+        return SiameseCharacterRecognizer(
+            characters_dir=characters_dir,
+            config=config,
+            similarity_threshold=similarity_threshold
+        )
+    else:
+        logger.info(f"Creating traditional character recognizer with {feature_method} features")
+        character_database = CharacterDatabase(characters_dir, feature_method)
+        return CharacterRecognizer(character_database, similarity_threshold)
+
+
 def create_face_detector(detection_config: Dict) -> Union[HaarFaceDetector, YOLOv8AnimeFaceDetector]:
     """Factory function to create face detector based on configuration"""
     method = detection_config.get('face_detection_method', 'haar')
@@ -417,8 +573,9 @@ def create_face_detector(detection_config: Dict) -> Union[HaarFaceDetector, YOLO
 class CharacterDetector:
     """Main character detection pipeline"""
     
-    def __init__(self, config: Dict, resume_from: str):
+    def __init__(self, config: Dict, resume_from: str, method_suffix: str = ""):
         self.config = config
+        self.method_suffix = method_suffix
         self.logger = logging.getLogger(__name__)
         
         # Extract configuration
@@ -479,22 +636,26 @@ class CharacterDetector:
     
     def _initialize_components(self):
         """Initialize character database, face detector, and recognizer"""
-        # Initialize character database
-        self.logger.info("Initializing character database...")
-        self.character_database = CharacterDatabase(self.characters_dir, self.feature_method)
-        
-        # Try to load from cache
-        cache_path = self.output_dir / "character_database.pkl"
-        if self.character_embedding_cache and cache_path.exists():
-            if self.character_database.load_cache(cache_path):
-                self.logger.info("Loaded character database from cache")
+        # Initialize character database (only for traditional methods)
+        if self.feature_method != 'siamese':
+            self.logger.info("Initializing character database...")
+            self.character_database = CharacterDatabase(self.characters_dir, self.feature_method)
+            
+            # Try to load from cache
+            cache_path = self.output_dir / "character_database.pkl"
+            if self.character_embedding_cache and cache_path.exists():
+                if self.character_database.load_cache(cache_path):
+                    self.logger.info("Loaded character database from cache")
+                else:
+                    self.character_database.load_characters()
+                    self.character_database.save_cache(cache_path)
             else:
                 self.character_database.load_characters()
-                self.character_database.save_cache(cache_path)
+                if self.character_embedding_cache:
+                    self.character_database.save_cache(cache_path)
         else:
-            self.character_database.load_characters()
-            if self.character_embedding_cache:
-                self.character_database.save_cache(cache_path)
+            self.logger.info("Using Siamese network - skipping traditional character database")
+            self.character_database = None
         
         # Initialize face detector using factory
         self.logger.info("Initializing face detector...")
@@ -510,11 +671,12 @@ class CharacterDetector:
                 min_size=self.haar_min_size
             )
         
-        # Initialize character recognizer
+        # Initialize character recognizer using factory
         self.logger.info("Initializing character recognizer...")
-        self.character_recognizer = CharacterRecognizer(
-            self.character_database,
-            self.similarity_threshold
+        self.character_recognizer = create_character_recognizer(
+            characters_dir=self.characters_dir,
+            config=self.config,
+            similarity_threshold=self.similarity_threshold
         )
     
     def load_filtered_frames(self) -> List[Dict]:
@@ -568,7 +730,8 @@ class CharacterDetector:
     
     def save_detected_faces(self, detections: List[FrameDetection]) -> Path:
         """Save detected face crops for visual inspection"""
-        faces_dir = self.output_dir / "faces"
+        dir_name = f"1_detected_faces{self.method_suffix}" if self.method_suffix else "1_detected_faces"
+        faces_dir = self.output_dir / dir_name
         faces_dir.mkdir(exist_ok=True)
         
         face_count = 0
@@ -606,9 +769,11 @@ class CharacterDetector:
         """Save frames with character matches, using colored bounding boxes and character labels"""
         # Choose directory name based on configuration
         if self.save_character_matches_only:
-            detected_frames_dir = self.output_dir / "character_matches"
+            dir_name = f"3_character_matches{self.method_suffix}" if self.method_suffix else "3_character_matches"
+            detected_frames_dir = self.output_dir / dir_name
         else:
-            detected_frames_dir = self.output_dir / "detected_frames"
+            dir_name = f"2_detected_frames{self.method_suffix}" if self.method_suffix else "2_detected_frames"
+            detected_frames_dir = self.output_dir / dir_name
         
         detected_frames_dir.mkdir(exist_ok=True)
         
@@ -711,9 +876,72 @@ class CharacterDetector:
         
         return detected_frames_dir
     
+    def save_named_faces(self, detections: List[FrameDetection]) -> Path:
+        """Save detected faces with character names appended to filenames"""
+        dir_name = f"3_detected_named_faces{self.method_suffix}" if self.method_suffix else "3_detected_named_faces"
+        named_faces_dir = self.output_dir / dir_name
+        named_faces_dir.mkdir(exist_ok=True)
+        
+        # Get the source faces directory
+        source_dir_name = f"1_detected_faces{self.method_suffix}" if self.method_suffix else "1_detected_faces"
+        source_faces_dir = self.output_dir / source_dir_name
+        
+        if not source_faces_dir.exists():
+            self.logger.warning(f"Source faces directory not found: {source_faces_dir}")
+            return named_faces_dir
+        
+        # Create a mapping from frame_id + face_index to character matches
+        frame_character_map = {}
+        for detection in detections:
+            if detection.character_matches:
+                # For simplicity, assign the best character match to all faces in the frame
+                # In a more sophisticated version, we could try to match specific faces to characters
+                best_character = detection.character_matches[0].character_name
+                frame_character_map[detection.frame_id] = best_character
+        
+        # Copy and rename face files
+        copied_count = 0
+        named_count = 0
+        
+        for face_file in source_faces_dir.glob("*.jpg"):
+            # Parse the original filename: frame_XXXXXX_face_XX_conf_X.XX.jpg
+            filename_parts = face_file.stem.split('_')
+            
+            if len(filename_parts) >= 4:
+                # Reconstruct frame_id from first two parts: frame_XXXXXX
+                frame_id = f"{filename_parts[0]}_{filename_parts[1]}"
+                
+                # Check if we have a character match for this frame
+                if frame_id in frame_character_map:
+                    character_name = frame_character_map[frame_id]
+                    # Create new filename with character name
+                    new_filename = f"{face_file.stem}_{character_name}.jpg"
+                    named_count += 1
+                else:
+                    # No character match, use "unknown"
+                    new_filename = f"{face_file.stem}_unknown.jpg"
+                
+                # Copy file with new name
+                new_file_path = named_faces_dir / new_filename
+                
+                try:
+                    # Copy the file
+                    import shutil
+                    shutil.copy2(face_file, new_file_path)
+                    copied_count += 1
+                except Exception as e:
+                    self.logger.warning(f"Failed to copy {face_file} to {new_file_path}: {e}")
+        
+        self.logger.info(f"Saved {copied_count} named face files to: {named_faces_dir}")
+        self.logger.info(f"  - {named_count} faces with character names")
+        self.logger.info(f"  - {copied_count - named_count} faces marked as 'unknown'")
+        
+        return named_faces_dir
+    
     def save_detection_results(self, detections: List[FrameDetection]) -> Path:
         """Save detection results to JSON file"""
-        output_path = self.output_dir / "detected.json"
+        filename = f"detected{self.method_suffix}.json" if self.method_suffix else "detected.json"
+        output_path = self.output_dir / filename
         
         # Convert to serializable format
         output_data = []
@@ -798,6 +1026,11 @@ class CharacterDetector:
             detected_frames_dir = None
             if self.save_detected_frames_enabled:
                 detected_frames_dir = self.save_detected_frames(detections)
+            
+            # Save named faces (Step 3: Visual organization with character names)
+            named_faces_dir = None
+            if self.save_detected_faces_enabled and total_character_matches > 0:
+                named_faces_dir = self.save_named_faces(detections)
             
             result = {
                 "success": True,
