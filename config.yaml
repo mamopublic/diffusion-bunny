@@ -168,6 +168,36 @@ captioning:
   retry_attempts: 3
   retry_delay: 1.0  # Seconds between retries
 
+# Stage 4.5: LLM Analysis (Remote Character Identification)
+llm_analysis:
+  enabled: true  # Enable/disable LLM analysis stage
+  model: "anthropic/claude-3-haiku"  # OpenRouter model to use
+  max_tokens: 300
+  temperature: 0.7
+  
+  # Processing settings
+  process_frames_with_faces_only: true  # Only analyze frames with detected faces
+  min_face_confidence: 0.5  # Minimum face detection confidence to process
+  batch_size: 5  # Number of frames to process in each batch
+  
+  # Composite image settings
+  strip_width: 150  # Width of character reference strip
+  character_image_size: 150  # Size of each character image in strip
+  strip_background_color: [240, 240, 240]  # Light gray background (BGR)
+  
+  # Cost optimization
+  enable_caching: true  # Cache LLM responses to avoid duplicate API calls
+  similarity_threshold_for_caching: 0.95  # Similarity threshold for cache hits
+  max_requests_per_minute: 30  # Rate limiting for API requests
+  
+  # OpenRouter API settings
+  openrouter:
+    api_key_env: "OPENROUTER_API_KEY"  # Environment variable for API key
+    base_url: "https://openrouter.ai/api/v1"
+    timeout: 30  # Request timeout in seconds
+    retry_attempts: 3  # Number of retry attempts for failed requests
+    retry_delay: 1.0  # Base delay between retries (exponential backoff)
+
 # Stage 5: Fine-tuning (LoRA/DreamBooth)
 finetuning:
   base_model: "runwayml/stable-diffusion-v1-5"

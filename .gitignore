@@ -152,7 +152,7 @@ checkpoints/
 *.ckpt
 
 # Output directories
-output/
+outputs/
 results/
 
 # IDE and editor files
