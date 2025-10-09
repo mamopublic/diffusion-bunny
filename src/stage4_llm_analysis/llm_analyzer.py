@@ -14,6 +14,10 @@ import argparse
 import yaml
 from datetime import datetime
 from dataclasses import dataclass
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 from .composite_creator import CompositeImageCreator, CompositeConfig
 from .openrouter_client import OpenRouterClient, OpenRouterConfig, LLMResponse
@@ -26,6 +30,7 @@ class FrameLLMAnalysis:
     composite_path: str
     characters_identified: List[str]
     scene_description: str
+    sd_caption: str
     confidence: float
     processing_time: float
     model_used: str
@@ -41,7 +46,7 @@ class LLMAnalyzer:
         
         # Extract configuration
         self.project_root = Path(config['input']['project_root'])
-        self.strip_data_dir = self.project_root.parent / "strip_data"
+        self.strip_data_dir = self.project_root / "strip_data"
         
         # LLM analysis settings
         llm_config = config.get('llm_analysis', {})
@@ -51,6 +56,10 @@ class LLMAnalyzer:
         self.batch_size = llm_config.get('batch_size', 5)
         self.enable_caching = llm_config.get('enable_caching', True)
         self.similarity_threshold_for_caching = llm_config.get('similarity_threshold_for_caching', 0.95)
+        
+        # Debug settings
+        self.debug_mode = llm_config.get('debug_mode', False)
+        self.debug_max_frames = llm_config.get('debug_max_frames', 3)
         
         # Validate and set run directory
         self.run_dir = self._validate_resume_directory(resume_from)
@@ -232,6 +241,7 @@ class LLMAnalyzer:
                 composite_path=str(composite_path),
                 characters_identified=llm_response.characters_present,
                 scene_description=llm_response.scene_description,
+                sd_caption=llm_response.sd_caption,
                 confidence=llm_response.confidence,
                 processing_time=llm_response.processing_time,
                 model_used=llm_response.model_used,
@@ -251,6 +261,7 @@ class LLMAnalyzer:
                 composite_path=str(composite_path),
                 characters_identified=[],
                 scene_description=f"Analysis failed: {str(e)}",
+                sd_caption=f"Analysis failed: {str(e)}",
                 confidence=0.0,
                 processing_time=0.0,
                 model_used="error",
@@ -292,6 +303,7 @@ class LLMAnalyzer:
                 "composite_path": analysis.composite_path,
                 "characters_identified": analysis.characters_identified,
                 "scene_description": analysis.scene_description,
+                "sd_caption": analysis.sd_caption,
                 "confidence": float(analysis.confidence),
                 "processing_time": float(analysis.processing_time),
                 "model_used": analysis.model_used,
@@ -368,6 +380,12 @@ class LLMAnalyzer:
                     "frames_analyzed": 0,
                     "run_directory": str(self.run_dir)
                 }
+            
+            # Apply debug frame limit if in debug mode
+            if self.debug_mode:
+                original_count = len(frames_to_analyze)
+                frames_to_analyze = frames_to_analyze[:self.debug_max_frames]
+                self.logger.warning(f"🐛 DEBUG MODE: Limited to {len(frames_to_analyze)} frames (from {original_count} total)")
             
             # Process frames in batches
             all_analyses = []

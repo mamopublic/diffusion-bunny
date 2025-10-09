@@ -66,13 +66,22 @@ llm_analysis:
 
 1. **Install Dependencies**:
    ```bash
-   pip install requests
+   pip install -r requirements.txt
    ```
 
-2. **Set API Key**:
+2. **Configure Environment Variables**:
+   
+   Copy `.env.example` to `.env` and add your OpenRouter API key:
    ```bash
-   export OPENROUTER_API_KEY="your_api_key_here"
+   cp .env.example .env
    ```
+   
+   Edit `.env` and set:
+   ```
+   OPENROUTER_API_KEY=your_actual_openrouter_api_key_here
+   ```
+   
+   The application will automatically load environment variables from the `.env` file using `python-dotenv`.
 
 3. **Prepare Character Strip Images**:
    Place character reference images in `pipeline_data/sprite/strip_data/`:
@@ -142,13 +151,43 @@ The stage creates:
 - **Smart Filtering**: Only processes frames with detected faces
 - **Batch Processing**: Groups requests efficiently
 - **Model Selection**: Uses cost-efficient models like Claude 3 Haiku
+- **Debug Mode**: Test with limited frames before full run
 
 ### Estimated Costs
 
+Per frame analysis:
+- **Input**: ~15,200 tokens (composite image + prompt)
+- **Output**: ~150 tokens (JSON response)
+- **Cost per frame**: ~$0.004 (less than half a cent)
+
 For a typical movie analysis:
-- **Input**: ~1000 frames with faces
-- **Model**: Claude 3 Haiku (~$0.25 per 1M input tokens)
-- **Estimated Cost**: $5-15 per full movie
+- **Frames with faces**: ~181 frames (based on detection results)
+- **Model**: Claude 3 Haiku ($0.25 per 1M input tokens, $1.25 per 1M output)
+- **Estimated Cost**: ~$0.72 for 181 frames, ~$4 for 1000 frames
+
+### Debug Mode for Cost-Effective Testing
+
+Enable debug mode in `config.yaml` to test with limited frames:
+
+```yaml
+llm_analysis:
+  debug_mode: true  # Enable debug mode
+  debug_max_frames: 3  # Only process first 3 frames with faces
+```
+
+This allows you to:
+- **Test the pipeline** with minimal cost (~$0.012 for 3 frames)
+- **Verify API connectivity** and authentication
+- **Check prompt effectiveness** before full run
+- **Validate output format** and quality
+
+Example debug run output:
+```
+🐛 DEBUG MODE: Limited to 3 frames (from 181 total)
+Processing 3 frames in 1 batches of 5
+```
+
+**Remember to set `debug_mode: false` for production runs!**
 
 ## Integration with Pipeline
 

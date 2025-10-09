@@ -14,6 +14,10 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 import hashlib
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 @dataclass
 class OpenRouterConfig:
@@ -33,6 +37,7 @@ class LLMResponse:
     """Response from LLM analysis"""
     characters_present: List[str]
     scene_description: str
+    sd_caption: str
     confidence: float
     raw_response: str
     processing_time: float
@@ -96,6 +101,7 @@ class ResponseCache:
                 response = LLMResponse(
                     characters_present=data['characters_present'],
                     scene_description=data['scene_description'],
+                    sd_caption=data.get('sd_caption', data['scene_description']),
                     confidence=data['confidence'],
                     raw_response=data['raw_response'],
                     processing_time=data['processing_time'],
@@ -162,28 +168,40 @@ class OpenRouterClient:
             raise
     
     def _create_prompt(self, character_names: List[str]) -> str:
-        """Create structured prompt for character identification"""
+        """Create structured prompt for character identification and SD caption generation"""
         char_list = ", ".join(character_names)
         
         prompt = f"""You are analyzing a frame from an animated movie. On the LEFT is a reference strip showing {len(character_names)} characters: {char_list}. On the RIGHT is the current frame with detected faces marked by colored boxes.
 
 Your task:
-1. IDENTIFY: Which characters from the reference strip appear in the current frame? Look carefully at facial features, hair, clothing, and other distinguishing characteristics.
-2. DESCRIBE: What is happening in this scene? Be concise but descriptive.
+1. IDENTIFY: Which characters from the reference strip appear in the current frame?
+2. DESCRIBE: What is happening in this scene?
+3. SD_CAPTION: Create a Stable Diffusion training caption that describes the visual content in detail.
 
 Format your response as JSON:
 {{
   "characters_present": ["character_name1", "character_name2"],
-  "scene_description": "Brief description of what's happening",
+  "scene_description": "Brief human-readable description",
+  "sd_caption": "Detailed caption for Stable Diffusion training",
   "confidence": 0.85
 }}
+
+SD_CAPTION Requirements:
+- CRITICAL: Keep under 77 tokens (CLIP encoder limit for Stable Diffusion)
+- Start with character names if identifiable
+- Include: actions, poses, expressions, clothing details
+- Describe: setting, background, lighting, atmosphere
+- Add style tags: "anime style", "detailed art", etc.
+- Include quality tags: "high quality", "detailed", "vibrant colors"
+- Use commas to separate concepts for efficiency
+- Be concise but descriptive - prioritize important visual details
+- Example: "ellie and phil, anime characters, forest clearing, red dress, casual clothes, lush background, soft lighting, detailed anime art, vibrant colors, high quality"
 
 Important:
 - Only include characters you can confidently identify
 - Use exact character names from the reference strip
 - Confidence should be between 0.0 and 1.0
-- Keep scene description under 100 words
-- If no characters are clearly identifiable, return empty array for characters_present"""
+- SD caption should be detailed and training-ready"""
 
         return prompt
     
@@ -196,25 +214,33 @@ Important:
             
             if start_idx != -1 and end_idx > start_idx:
                 json_str = response_text[start_idx:end_idx]
-                parsed = json.loads(json_str)
-                
-                # Validate required fields
-                if 'characters_present' in parsed and 'scene_description' in parsed:
-                    return {
-                        'characters_present': parsed.get('characters_present', []),
-                        'scene_description': parsed.get('scene_description', ''),
-                        'confidence': float(parsed.get('confidence', 0.5))
-                    }
+                try:
+                    parsed = json.loads(json_str)
+                    
+                    # Validate required fields
+                    if 'characters_present' in parsed and 'scene_description' in parsed:
+                        return {
+                            'characters_present': parsed.get('characters_present', []),
+                            'scene_description': parsed.get('scene_description', ''),
+                            'sd_caption': parsed.get('sd_caption', parsed.get('scene_description', '')),
+                            'confidence': float(parsed.get('confidence', 0.5))
+                        }
+                except json.JSONDecodeError as je:
+                    self.logger.error(f"JSON decode error: {je}")
+                    self.logger.error(f"Attempted to parse: {json_str[:500]}")
             
             # Fallback: try to extract information manually
             self.logger.warning("Could not parse JSON response, attempting manual extraction")
+            self.logger.warning(f"Raw response: {response_text[:500]}")
             return self._manual_parse(response_text)
             
         except Exception as e:
             self.logger.error(f"Failed to parse response: {e}")
+            self.logger.error(f"Raw response: {response_text[:500]}")
             return {
                 'characters_present': [],
                 'scene_description': response_text[:200] + "..." if len(response_text) > 200 else response_text,
+                'sd_caption': response_text[:200] + "..." if len(response_text) > 200 else response_text,
                 'confidence': 0.0
             }
     
@@ -230,9 +256,20 @@ Important:
             if name.lower() in response_text.lower():
                 characters.append(name)
         
+        # Create a basic caption from the response
+        scene_desc = response_text[:200] + "..." if len(response_text) > 200 else response_text
+        
+        # Try to create a basic SD caption
+        if characters:
+            char_str = " and ".join(characters)
+            sd_caption = f"{char_str}, anime characters, {scene_desc[:50]}, anime style, detailed art"
+        else:
+            sd_caption = f"anime scene, {scene_desc[:60]}, anime style, detailed art"
+        
         return {
             'characters_present': characters,
-            'scene_description': response_text[:200] + "..." if len(response_text) > 200 else response_text,
+            'scene_description': scene_desc,
+            'sd_caption': sd_caption,
             'confidence': confidence
         }
     
@@ -329,6 +366,7 @@ Important:
             response = LLMResponse(
                 characters_present=parsed_data['characters_present'],
                 scene_description=parsed_data['scene_description'],
+                sd_caption=parsed_data.get('sd_caption', parsed_data['scene_description']),
                 confidence=parsed_data['confidence'],
                 raw_response=raw_response,
                 processing_time=processing_time,
@@ -339,7 +377,11 @@ Important:
             if self.cache:
                 self.cache.set(image_data, prompt, response)
             
-            self.logger.info(f"Analyzed {image_path} in {processing_time:.2f}s - Found: {response.characters_present}")
+            # Verbose logging to show actual captions
+            self.logger.info(f"Analyzed {image_path.name} in {processing_time:.2f}s")
+            self.logger.info(f"  Characters: {response.characters_present}")
+            self.logger.info(f"  Scene: {response.scene_description}")
+            self.logger.info(f"  SD Caption: {response.sd_caption}")
             return response
             
         except Exception as e:
@@ -350,6 +392,7 @@ Important:
             return LLMResponse(
                 characters_present=[],
                 scene_description=f"Analysis failed: {str(e)}",
+                sd_caption=f"Analysis failed: {str(e)}",
                 confidence=0.0,
                 raw_response="",
                 processing_time=processing_time,

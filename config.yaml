@@ -172,13 +172,17 @@ captioning:
 llm_analysis:
   enabled: true  # Enable/disable LLM analysis stage
   model: "anthropic/claude-3-haiku"  # OpenRouter model to use
-  max_tokens: 300
+  max_tokens: 500  # Increased for longer SD captions
   temperature: 0.7
   
   # Processing settings
   process_frames_with_faces_only: true  # Only analyze frames with detected faces
   min_face_confidence: 0.5  # Minimum face detection confidence to process
   batch_size: 5  # Number of frames to process in each batch
+  
+  # Debug settings
+  debug_mode: false  # Set to true to limit frames for testing
+  debug_max_frames: 3  # Maximum frames to process in debug mode (ignored when debug_mode is false)
   
   # Composite image settings
   strip_width: 150  # Width of character reference strip
@@ -200,33 +204,54 @@ llm_analysis:
 
 # Stage 5: Fine-tuning (LoRA/DreamBooth)
 finetuning:
-  base_model: "runwayml/stable-diffusion-v1-5"
-  method: "lora"  # lora | dreambooth | both
-  output_dir: "./data/models"
+  # Model settings - CPU optimized
+  #base_model: "Linaqruf/anything-v3.0" #anime
+  base_model: "stable-diffusion-v1-5/stable-diffusion-v1-5"
+  method: "lora"  # lora only
+  output_dir: "outputs/lora_weights"
+  device: "cpu"  # cpu | cuda
   
-  # LoRA settings
+  # Data settings
+  data_dir: "training_data/instance_images"  # Created by prepare_data.py
+  instance_prompt: "anime character"
+  resolution: 512
+  center_crop: true
+  random_flip: false
+  
+  # LoRA settings - CPU optimized (lower rank, UNet only)
   lora:
-    rank: 16
-    alpha: 32
+    rank: 8  # Lower for faster CPU training
+    alpha: 16
     dropout: 0.1
     target_modules: ["to_k", "to_q", "to_v", "to_out.0"]
+    train_text_encoder: false  # Only train UNet, freeze text encoder
   
-  # Training settings
+  # Training settings - CPU optimized
   training:
-    learning_rate: 1e-4
-    batch_size: 1
-    num_epochs: 10
-    max_train_steps: 1000
-    gradient_accumulation_steps: 4
-    mixed_precision: "fp16"
+    learning_rate: 5.0e-5  # Lower for stability
+    batch_size: 1  # CPU limitation
+    max_train_steps: 500  # Fewer steps for CPU
+    gradient_accumulation_steps: 8  # Simulate larger batch
+    gradient_checkpointing: true  # Save memory
+    mixed_precision: "no"  # CPU doesn't support fp16
     seed: 42
+    save_steps: 100  # Save checkpoint every 100 steps
+    logging_steps: 10
+    validation_prompt: "ellie, anime character, smiling"
+    num_validation_images: 2
     
-  # Data settings
-  data:
-    resolution: 512
-    center_crop: true
-    random_flip: true
-    train_text_encoder: false
+  # Prior preservation (optional, adds training time)
+  prior_preservation:
+    enabled: false  # Disable to save ~40% training time
+    num_class_images: 200
+    class_prompt: "anime character"
+    class_data_dir: "regularization_images"
+    prior_loss_weight: 1.0
+  
+  # Performance settings
+  num_workers: 0  # CRITICAL for Windows
+  pin_memory: false  # CPU doesn't benefit
+  use_8bit_adam: false  # Not supported on CPU
 
 # Stage 6: Inference
 inference:
