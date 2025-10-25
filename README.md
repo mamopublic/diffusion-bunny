@@ -1,6 +1,42 @@
 # Diffusion Bunny 🐰✨
 
-A proof-of-concept pipeline that transforms movies into fine-tuned Stable Diffusion 1.5 models. Extract frames, filter quality, detect characters, generate captions, and create character-specific AI art models.
+A learning project exploring various techniques for building a Stable Diffusion pipeline on CPU-only hardware. This project documents the exploration of face recognition approaches, from traditional computer vision to neural networks to LLM-based analysis, in an attempt to create character-specific models from video content.
+
+**Note**: This is an exploration and learning project, not a production-ready system. While the pipeline functions, its accuracy is limited due to several factors discussed below. The real value lies in the techniques explored and lessons learned about what's possible with CPU-only processing.
+
+## Project Journey & Lessons Learned
+
+This project began as an exploration: having successfully built stable diffusion pipelines on GPU machines, I became curious about what could be accomplished on CPU-only hardware - what techniques would work, what would fail, and what could be learned in the process.
+
+### The Path Through Different Approaches
+
+I tried several face recognition approaches, each with its own challenges:
+
+**Traditional Computer Vision (Haar/SIFT Features)**: Started with classical approaches using Haar cascades and SIFT feature detection. These performed poorly on the anime/character content, struggling with the stylized nature of animated faces and varying art styles.
+
+**Siamese Neural Networks**: Moved to more modern approaches, implementing Siamese networks with MobileNetV2 backbones for character recognition. While technically functional, these also failed to achieve satisfactory accuracy on the target content.
+
+**LLM-Based Analysis (Claude Haiku)**: Eventually settled on using Claude Haiku for character recognition and scene analysis. This approach worked marginally better than the previous methods, providing more contextual understanding of scenes and characters.
+
+### What Went Wrong (And Why)
+
+The stable diffusion fine-tuning process ultimately failed, but for instructive reasons:
+
+- **Insufficient Data**: The amount of training data extracted was simply not enough for effective fine-tuning
+- **Lack of Diversity**: The dataset lacked the variety needed for robust model training
+- **Data Quality Issues**: Most shots were expansive scenes with small character faces, making character recognition and extraction challenging
+- **Need for Better Preprocessing**: The data required more sophisticated cropping and preprocessing to focus on character features
+
+### What Worked
+
+Despite the challenges, several aspects proved successful:
+
+- **Pipeline Architecture**: The modular, stage-based approach allows for easy experimentation and iteration
+- **CPU Processing**: Demonstrated that meaningful video processing and analysis can be done on CPU-only hardware
+- **Technique Exploration**: Served as an excellent playground for comparing different face recognition approaches
+- **Automatic Labeling**: The LLM-based labeling system, while not perfect, showed promise for automated dataset creation
+
+The project went through various approaches, with failures providing as much insight as successes. The theme throughout was simple: what can we do on CPU, and what can we learn in the process?
 
 ## Overview
 
@@ -370,4 +406,4 @@ For questions, issues, or contributions:
 
 ---
 
-**Note**: This is a proof-of-concept project. Use responsibly and ensure you have appropriate rights to process video content.
+**Note**: This is a learning and exploration project that documents various approaches to CPU-based diffusion pipeline development. While not immediately successful in its original goals, it serves as a valuable resource for understanding the challenges and techniques involved in character recognition, automated labeling, and diffusion model fine-tuning on constrained hardware. Use responsibly and ensure you have appropriate rights to process video content.
