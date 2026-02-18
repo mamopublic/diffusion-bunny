@@ -4,39 +4,31 @@ A learning project exploring various techniques for building a Stable Diffusion 
 
 **Note**: This is an exploration and learning project, not a production-ready system. While the pipeline functions, its accuracy is limited due to several factors discussed below. The real value lies in the techniques explored and lessons learned about what's possible with CPU-only processing.
 
-## Project Journey & Lessons Learned
+## Experimental Results
 
-This project began as an exploration: having successfully built stable diffusion pipelines on GPU machines, I became curious about what could be accomplished on CPU-only hardware - what techniques would work, what would fail, and what could be learned in the process.
+Multiple face recognition approaches were tested:
 
-### The Path Through Different Approaches
+**Traditional Computer Vision (Haar/SIFT Features)**: Haar cascades and SIFT feature detection performed poorly on anime/character content, struggling with stylized faces and varying art styles.
 
-I tried several face recognition approaches, each with its own challenges:
+**Siamese Neural Networks**: Siamese networks with MobileNetV2 backbones for character recognition. Technically functional but failed to achieve satisfactory accuracy on the target content.
 
-**Traditional Computer Vision (Haar/SIFT Features)**: Started with classical approaches using Haar cascades and SIFT feature detection. These performed poorly on the anime/character content, struggling with the stylized nature of animated faces and varying art styles.
+**LLM-Based Analysis (Claude Haiku)**: Claude Haiku for character recognition and scene analysis worked marginally better, providing more contextual understanding.
 
-**Siamese Neural Networks**: Moved to more modern approaches, implementing Siamese networks with MobileNetV2 backbones for character recognition. While technically functional, these also failed to achieve satisfactory accuracy on the target content.
+### Challenges Encountered
 
-**LLM-Based Analysis (Claude Haiku)**: Eventually settled on using Claude Haiku for character recognition and scene analysis. This approach worked marginally better than the previous methods, providing more contextual understanding of scenes and characters.
+The stable diffusion fine-tuning process faced several limitations:
 
-### What Went Wrong (And Why)
+- **Insufficient Data**: Training data volume was inadequate for effective fine-tuning
+- **Lack of Diversity**: Dataset lacked the variety needed for robust model training
+- **Data Quality Issues**: Expansive scenes with small character faces made recognition challenging
+- **Preprocessing Requirements**: More sophisticated cropping and preprocessing needed
 
-The stable diffusion fine-tuning process ultimately failed, but for instructive reasons:
+### Successful Components
 
-- **Insufficient Data**: The amount of training data extracted was simply not enough for effective fine-tuning
-- **Lack of Diversity**: The dataset lacked the variety needed for robust model training
-- **Data Quality Issues**: Most shots were expansive scenes with small character faces, making character recognition and extraction challenging
-- **Need for Better Preprocessing**: The data required more sophisticated cropping and preprocessing to focus on character features
-
-### What Worked
-
-Despite the challenges, several aspects proved successful:
-
-- **Pipeline Architecture**: The modular, stage-based approach allows for easy experimentation and iteration
-- **CPU Processing**: Demonstrated that meaningful video processing and analysis can be done on CPU-only hardware
-- **Technique Exploration**: Served as an excellent playground for comparing different face recognition approaches
-- **Automatic Labeling**: The LLM-based labeling system, while not perfect, showed promise for automated dataset creation
-
-The project went through various approaches, with failures providing as much insight as successes. The theme throughout was simple: what can we do on CPU, and what can we learn in the process?
+- **Pipeline Architecture**: Modular, stage-based approach enables experimentation and iteration
+- **CPU Processing**: Demonstrates meaningful video processing and analysis on CPU-only hardware
+- **Technique Comparison**: Framework for evaluating different face recognition approaches
+- **Automatic Labeling**: LLM-based labeling system shows promise for automated dataset creation
 
 ## Overview
 
@@ -393,9 +385,7 @@ To switch face detection methods, modify the `detection.face_detection_model` se
 
 ## Acknowledgments
 
-- OpenCV for video processing and face detection capabilities
-- Hugging Face for diffusion model infrastructure
-- OpenRouter for LLM API access and integration
+Built with OpenCV, Hugging Face, and OpenRouter API.
 
 ## Support
 
