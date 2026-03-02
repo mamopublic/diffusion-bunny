@@ -269,3 +269,4 @@ tensorboard_logs/
 
 # The movies and frames
 pipeline_data/
+memory-bank/

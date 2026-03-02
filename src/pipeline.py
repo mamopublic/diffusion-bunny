@@ -171,18 +171,53 @@ class Pipeline:
             return {"success": False, "error": "Not implemented"}
         
     def run_captioning(self) -> Dict:
-        """Run Stage 4: Caption Generation"""
-        self.logger.info("=== Stage 4: Caption Generation ===")
-        # TODO: Implement captioning stage
-        self.logger.warning("Captioning stage not yet implemented")
-        return {"success": False, "error": "Not implemented"}
-        
+        """Run Stage 4: LLM Analysis & Caption Generation"""
+        self.logger.info("=== Stage 4: LLM Analysis & Caption Generation ===")
+        try:
+            from stage4_llm_analysis.llm_analyzer import LLMAnalyzer
+
+            if not hasattr(self, 'current_run_dir') or not self.current_run_dir:
+                return {"success": False, "error": "Captioning stage requires a run directory from previous stages"}
+
+            analyzer = LLMAnalyzer(self.config, str(self.current_run_dir))
+            result = analyzer.run()
+
+            if result['success']:
+                self.logger.info(
+                    f"[SUCCESS] LLM analysis completed: "
+                    f"{result.get('frames_analyzed', 0)} frames analyzed, "
+                    f"{result.get('successful_analyses', 0)} successful"
+                )
+            else:
+                self.logger.error(f"[FAILED] LLM analysis failed: {result.get('error')}")
+
+            return result
+
+        except ImportError as e:
+            self.logger.error(f"Could not import LLM analysis stage: {e}")
+            return {"success": False, "error": f"Import error: {e}"}
+        except Exception as e:
+            self.logger.error(f"LLM analysis crashed: {str(e)}")
+            return {"success": False, "error": str(e)}
+
     def run_finetuning(self) -> Dict:
-        """Run Stage 5: Fine-tuning"""
-        self.logger.info("=== Stage 5: Fine-tuning ===")
-        # TODO: Implement finetuning stage
-        self.logger.warning("Fine-tuning stage not yet implemented")
-        return {"success": False, "error": "Not implemented"}
+        """Run Stage 5: LoRA Fine-tuning"""
+        self.logger.info("=== Stage 5: LoRA Fine-tuning ===")
+        try:
+            from stage5_finetuning.train import LoRATrainer
+
+            trainer = LoRATrainer(config_path=self.config_path)
+            trainer.train()
+
+            self.logger.info("[SUCCESS] LoRA fine-tuning completed")
+            return {"success": True}
+
+        except ImportError as e:
+            self.logger.error(f"Could not import fine-tuning stage: {e}")
+            return {"success": False, "error": f"Import error: {e}"}
+        except Exception as e:
+            self.logger.error(f"Fine-tuning crashed: {str(e)}")
+            return {"success": False, "error": str(e)}
         
     def run_inference(self) -> Dict:
         """Run Stage 6: Inference"""
@@ -227,8 +262,8 @@ class Pipeline:
         
         elif stage == "captioning":
             if resume_dir:
-                # Check if captioning already completed in this run
-                captioning_output = resume_dir / "captioning" / "captions.json"
+                # Check if LLM analysis already completed in this run
+                captioning_output = resume_dir / "llm_analysis" / "llm_analysis.json"
                 return captioning_output.exists()
             else:
                 return False  # Captioning requires explicit resume directory

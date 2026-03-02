@@ -1,34 +1,43 @@
 # Diffusion Bunny 🐰✨
 
-A learning project exploring various techniques for building a Stable Diffusion pipeline on CPU-only hardware. This project documents the exploration of face recognition approaches, from traditional computer vision to neural networks to LLM-based analysis, in an attempt to create character-specific models from video content.
+An end-to-end pipeline for automatically constructing character-specific LoRA fine-tuning datasets from video, using a hybrid **Siamese network / YOLOv8 detection + vision-LLM auto-labeling** strategy, designed for CPU-constrained environments.
 
-**Note**: This is an exploration and learning project, not a production-ready system. While the pipeline functions, its accuracy is limited due to several factors discussed below. The real value lies in the techniques explored and lessons learned about what's possible with CPU-only processing.
+The central question driving this project: *Can a fully automated pipeline — no manual labeling, no GPU at preprocessing time — produce a usable DreamBooth-style training dataset from raw video footage?*
 
 ## Experimental Results
 
-Multiple face recognition approaches were tested:
+The pipeline was run end-to-end on anime video content, producing **65 frames** that passed quality filtering and character detection thresholds, which then served as the LoRA training set.
 
-**Traditional Computer Vision (Haar/SIFT Features)**: Haar cascades and SIFT feature detection performed poorly on anime/character content, struggling with stylized faces and varying art styles.
+### What Worked
 
-**Siamese Neural Networks**: Siamese networks with MobileNetV2 backbones for character recognition. Technically functional but failed to achieve satisfactory accuracy on the target content.
+- **Detection pipeline**: YOLOv8 (anime-domain) + Siamese recognizer consistently out-performed the ORB/SIFT/SURF baseline — substantially fewer false-positive character matches on stylized art. The composite-image LLM strategy (face crops + reference strip sent together) further reduced hallucination on ambiguous crops.
+- **Auto-labeling quality**: Claude Haiku's character identification was meaningfully better than both the Siamese alone and raw frame analysis, particularly for partially-occluded faces and wide establishing shots.
+- **Pipeline engineering**: Resumable stage execution, timestamped run directories, config provenance copying — all functioned as designed.
 
-**LLM-Based Analysis (Claude Haiku)**: Claude Haiku for character recognition and scene analysis worked marginally better, providing more contextual understanding.
+### What Didn't Work (and Why)
 
-### Challenges Encountered
+| Method | Result | Root Cause |
+|---|---|---|
+| Haar cascade | Poor recall on anime faces | Haar features tuned for photorealistic faces; stylized geometry doesn't generalize |
+| ORB/SIFT feature matching | High false-positive rate | Low-texture anime art produces unstable keypoints; match-count thresholds difficult to tune |
+| Siamese network | Functional but limited | 128-dim embeddings distinguish major characters but struggle with same-character pose variation |
+| LoRA fine-tuning (65 frames) | Insufficient character consistency | Dataset size was the binding constraint — DreamBooth-style training typically requires 200–500+ images |
 
-The stable diffusion fine-tuning process faced several limitations:
+**Core finding**: The *pipeline* works — it can go from raw video to a labeled dataset automatically. The *dataset* it produced (65 frames, limited pose diversity, expansive scenes with small faces) was insufficient for reliable fine-tuning. The bottleneck is upstream data quality and volume, not the auto-labeling method.
 
-- **Insufficient Data**: Training data volume was inadequate for effective fine-tuning
-- **Lack of Diversity**: Dataset lacked the variety needed for robust model training
-- **Data Quality Issues**: Expansive scenes with small character faces made recognition challenging
-- **Preprocessing Requirements**: More sophisticated cropping and preprocessing needed
+### Design Decisions
 
-### Successful Components
+**Why Siamese network over ORB/SIFT/SURF for character recognition?**
 
-- **Pipeline Architecture**: Modular, stage-based approach enables experimentation and iteration
-- **CPU Processing**: Demonstrates meaningful video processing and analysis on CPU-only hardware
-- **Technique Comparison**: Framework for evaluating different face recognition approaches
-- **Automatic Labeling**: LLM-based labeling system shows promise for automated dataset creation
+Traditional feature descriptors fail on anime-style art because: (1) stylized faces have low texture, making keypoint detection unstable; (2) the color palette and line-art rendering make descriptor distances uninformative across different scenes. ORB in particular is designed for geometric repeatability — which anime faces don't have across lighting and art-style variation. The Siamese approach learns an embedding space directly from character reference images, using contrastive/triplet loss to separate character identity regardless of pose. It's still imperfect (same-character variation is a real challenge), which is why the LLM fallback (Stage 4) exists.
+
+**Why the composite-image LLM strategy?**
+
+Sending raw frames to a VLM risks hallucinated character names — the model may identify characters it "knows" from its training data rather than from the actual reference set. Compositing detected face crops alongside a visual reference strip of candidate characters grounds the identification problem: the LLM is explicitly shown who the candidates are and asked to match, not freely identify. This is a constrained visual comparison task rather than open-ended recognition, which substantially reduces hallucination on domain-specific characters.
+
+**Why LoRA on UNet only (frozen text encoder)?**
+
+With ~65 training frames, fine-tuning the text encoder risks catastrophic forgetting — the model may corrupt its learned concept space for common tokens. Rank-8 UNet LoRA targeting attention layers gives character-specific weight updates at minimal parameter cost (~3M trainable vs ~860M base), sufficient for style anchoring with a small dataset. The text encoder is intentionally left frozen to preserve compositional generation capability.
 
 ## Overview
 
@@ -36,26 +45,26 @@ Diffusion Bunny automates the complete workflow from raw video files to characte
 
 0. **Siamese Network Training**: Train a specialized neural network for character recognition using reference images
 1. **Frame Extraction**: Extract keyframes or interval-based frames from movies using multiple sampling methods
-2. **Quality Filtering & Deduplication**: Remove blurry or low-quality frames and eliminate near-duplicates using intelligent filtering
-3. **Character Detection**: Detect faces and identify characters using advanced computer vision or trained Siamese networks
-4. **LLM Analysis**: Generate comprehensive scene descriptions and character identification using large language models
+2. **Quality Filtering & Deduplication**: Remove blurry or low-quality frames and eliminate near-duplicates using perceptual hashing
+3. **Character Detection**: Detect faces and identify characters using YOLOv8 (anime) or Haar cascade, with Siamese or feature-based recognition
+4. **LLM Analysis**: Generate scene descriptions and character identification via vision-language model (composite-image strategy)
 5. **LoRA Fine-tuning**: Train efficient LoRA adapters for Stable Diffusion models using processed data
 6. **Inference**: Generate new character-specific images with the fine-tuned models
 
 ## Features
 
 - 🎬 **Video Processing**: Support for MP4, AVI, MOV, MKV formats
-- 🔍 **Smart Filtering**: Blur detection and quality assessment
-- 👤 **Character Recognition**: Face detection and matching against reference images
-- 📝 **LLM Analysis**: Character identification and scene captioning via OpenRouter API
-- 🎯 **Efficient Training**: LoRA and DreamBooth fine-tuning
-- ⚡ **Resumable Pipeline**: Skip completed stages and resume from any point
-- 🔧 **Configuration-Driven**: All settings controlled via YAML configuration
-- 💾 **Memory Efficient**: CPU-only processing with intelligent batching
+- 🔍 **Smart Filtering**: Laplacian blur detection, brightness/contrast assessment, pHash deduplication
+- 👤 **Character Recognition**: YOLOv8 anime face detection + Siamese embedding matching against reference images
+- 📝 **LLM Auto-labeling**: VLM-based character ID and SD-caption generation via OpenRouter API (composite-image strategy)
+- 🎯 **LoRA Fine-tuning**: UNet-only LoRA with PEFT, DreamBooth-style dataset preparation
+- ⚡ **Resumable Pipeline**: Timestamped run directories, per-stage idempotency checks, resume from any checkpoint
+- 🔧 **Configuration-Driven**: All parameters controlled via `config.yaml`, config copied to each run directory for provenance
+- 💾 **CPU-First Design**: All preprocessing stages run without GPU; fine-tuning offloadable to Colab/Kaggle
 
 ## Technical Details
 
-Diffusion Bunny is a six-stage pipeline that transforms raw video content into fine-tuned character-specific diffusion models. Each stage processes data sequentially from video analysis to AI model generation. The pipeline supports multiple detection methods, processing approaches, and hardware configurations.
+Diffusion Bunny is a six-stage pipeline that transforms raw video content into fine-tuned character-specific diffusion models. Each stage processes data sequentially and writes structured JSON artifacts that downstream stages consume.
 
 ### Stage 0: Siamese Network Training
 
@@ -65,33 +74,33 @@ Training occurs through generated positive and negative pairs from character ref
 
 ### Stage 1: Frame Extraction
 
-The frame extraction stage processes input video files using OpenCV to generate candidate frames for analysis. The system supports three extraction methods: uniform sampling for temporal coverage, interval-based extraction for regular time-spaced frames, and keyframe detection using frame difference analysis with configurable thresholds. Each method serves different use cases - uniform sampling ensures coverage across the video, interval sampling provides predictable temporal spacing, and keyframe detection focuses on scene changes and visual transitions.
+The frame extraction stage processes input video files using OpenCV to generate candidate frames for analysis. The system supports three extraction methods: uniform sampling for temporal coverage, interval-based extraction for regular time-spaced frames, and keyframe detection using frame difference analysis with configurable thresholds. Each method serves different use cases — uniform sampling ensures coverage across the video, interval sampling provides predictable temporal spacing, and keyframe detection focuses on scene changes and visual transitions.
 
-The extraction process handles multiple video formats (MP4, AVI, MOV, MKV) and includes frame preprocessing with optional resizing and quality-controlled JPEG compression. All extracted frames are accompanied by metadata including timestamps, frame numbers, source video information, and extraction parameters. This metadata enables tracking and reproducibility throughout the pipeline. The system can handle large video files by streaming processing and provides configurable limits to manage storage requirements while maintaining temporal representation.
+The extraction process handles multiple video formats (MP4, AVI, MOV, MKV) and includes frame preprocessing with optional resizing and quality-controlled JPEG compression. All extracted frames are accompanied by metadata including timestamps, frame numbers, source video information, and extraction parameters. This metadata enables tracking and reproducibility throughout the pipeline.
 
 ### Stage 2: Quality Filtering & Deduplication
 
 The quality filtering stage implements a multi-metric assessment system to identify and retain quality frames from the extraction stage. The primary quality metrics include Laplacian variance blur detection (identifying sharp, well-focused frames), brightness analysis to eliminate over/under-exposed content, and contrast measurement to ensure visual richness. The system processes frames in configurable batches, optionally keeping only the best frame per batch to reduce dataset size while maintaining quality distribution.
 
-The deduplication subsystem uses perceptual hashing (pHash) to identify and remove near-duplicate frames that commonly occur in video content. The implementation supports configurable similarity thresholds, hash precision levels, and group size requirements for deduplication decisions. When duplicates are detected, the system retains the highest-quality frame based on blur scores and other metrics. This two-stage approach (quality filtering followed by deduplication) reduces dataset size while preserving visual diversity and quality.
+The deduplication subsystem uses perceptual hashing (pHash) to identify and remove near-duplicate frames that commonly occur in video content. The implementation supports configurable similarity thresholds, hash precision levels, and group size requirements for deduplication decisions. When duplicates are detected, the system retains the highest-quality frame based on blur scores and other metrics.
 
 ### Stage 3: Character Detection
 
 The character detection stage combines face detection with character recognition to identify and label characters within filtered frames. The system supports multiple face detection approaches: traditional Haar cascade classifiers for compatibility, and YOLOv8-based anime face detection for animated content. The YOLOv8 implementation uses models trained on anime faces, downloaded from Hugging Face repositories, and supports both CPU and GPU inference with configurable confidence thresholds.
 
-Character recognition offers two approaches: traditional computer vision using ORB, SIFT, or SURF feature descriptors with feature matching algorithms, and the Siamese network approach trained in Stage 0. The Siamese method uses learned embeddings rather than hand-crafted features for anime characters. Recognition results include confidence scores, character names, and bounding box coordinates. The system generates multiple output formats including detected face crops, annotated frames with character labels, and JSON metadata. Color-coded bounding boxes and character visualizations aid in result inspection and pipeline debugging.
+Character recognition offers two approaches: traditional computer vision using ORB, SIFT, or SURF feature descriptors, and the Siamese network approach trained in Stage 0. The Siamese method uses learned embeddings rather than hand-crafted features for anime characters. Recognition results include confidence scores, character names, and bounding box coordinates. Color-coded bounding boxes and character visualizations aid in result inspection and pipeline debugging.
 
 ### Stage 4: LLM Analysis
 
-The LLM analysis stage combines local face detection results with large language model capabilities for character identification and scene description. The system creates composite images that merge detected faces with character reference strips, providing visual context for LLM analysis. These composites are processed through OpenRouter API integration, supporting vision-language models including Claude and GPT-4 Vision.
+The LLM analysis stage combines local face detection results with large language model capabilities for character identification and scene description. The system creates **composite images** that merge detected face crops with character reference strips, providing visual context for LLM analysis. These composites are processed through OpenRouter API integration, supporting vision-language models including Claude and GPT-4 Vision.
 
-The LLM analysis generates three outputs: character identification (cross-referencing detected faces with known characters), scene descriptions (capturing setting, poses, clothing, and interactions), and Stable Diffusion-optimized captions (formatted for AI art generation). The system includes caching mechanisms to avoid duplicate API calls, configurable confidence thresholds for processing decisions, and error handling with fallbacks. Rate limiting and batch processing manage API usage while maintaining cost control. Results are stored with traceability including raw LLM responses, processing times, and confidence metrics.
+The LLM analysis generates three outputs: character identification (constrained to the reference set shown in the composite), scene descriptions (capturing setting, poses, clothing, and interactions), and Stable Diffusion-optimized captions (formatted for training). The system includes caching mechanisms, configurable confidence thresholds, rate limiting, and batch processing for API cost control. Results are stored with traceability including raw LLM responses, processing times, and confidence metrics.
 
 ### Stage 5: LoRA Fine-tuning
 
-The final stage implements Low-Rank Adaptation (LoRA) fine-tuning for Stable Diffusion models, creating character-specific AI art generators from the processed video content. The implementation uses the PEFT (Parameter-Efficient Fine-Tuning) library to add trainable adapter layers to the UNet component while keeping the text encoder frozen, reducing computational requirements and memory usage. The system prepares training data from LLM analysis results, creating DreamBooth-compatible datasets with character-specific captions and instance images.
+The final stage implements Low-Rank Adaptation (LoRA) fine-tuning for Stable Diffusion models, creating character-specific AI art generators from the processed video content. The implementation uses the PEFT library to add trainable adapter layers to the UNet component while keeping the text encoder frozen. The system auto-discovers the most recent LLM analysis output and prepares a DreamBooth-compatible dataset, then runs on CPU with gradient checkpointing enabled.
 
-Training occurs on CPU with optimizations including gradient checkpointing, mixed precision training, and data loading pipelines. The LoRA configuration uses rank-8 adapters targeting specific UNet modules (attention layers), balancing adaptation capability and computational efficiency. The training process includes checkpoint saving, validation image generation, and logging. Final outputs include trained LoRA weights compatible with inference tools, enabling generation of character-specific artwork that maintains consistency with the source video content. The stage is designed as a self-contained process that can resume from previous pipeline stages and adapt to different hardware configurations.
+The LoRA configuration uses rank-8 adapters targeting UNet attention layers, with `init_lora_weights="gaussian"`. The training process includes checkpoint saving at configurable intervals and config provenance copying to the run directory. Final outputs are PEFT-compatible LoRA weights (`adapter_config.json` + `adapter_model.bin`) ready for loading with standard diffusers tooling.
 
 ## Quick Start
 
@@ -102,11 +111,9 @@ Training occurs on CPU with optimizations including gradient checkpointing, mixe
 git clone https://github.com/mamopublic/diffusion-bunny.git
 cd diffusion-bunny
 
-# Create conda environment with Python 3.10
-conda create -p /c/Users/mamop/miniconda3/envs/diffusion python=3.10
-
-# Activate the environment
-source activate /c/Users/mamop/miniconda3/envs/diffusion
+# Create conda environment
+conda create -n diffusion-bunny python=3.10
+conda activate diffusion-bunny
 
 # Install dependencies
 pip install -r requirements.txt
@@ -131,11 +138,12 @@ cp character1_ref2.jpg data/input/characters/character1/
 
 ### 3. Configure Pipeline
 
-Edit `config.yaml` to customize:
-- Input video path and character references
-- Processing parameters for each stage
-- Caption generation settings
-- Model training parameters
+Edit `config.yaml` to set:
+- Input video path and character references directory
+- Extraction method and frame count targets
+- Detection method (`yolo_anime` recommended for animation)
+- LLM model and API settings
+- LoRA rank, learning rate, training steps
 
 ### 4. Run Pipeline
 
@@ -143,11 +151,14 @@ Edit `config.yaml` to customize:
 # Run complete pipeline
 python src/pipeline.py
 
-# Run specific stages
+# Run specific stages only
 python src/pipeline.py --stages extraction,filtering
 
-# Resume from specific stage
-python src/pipeline.py --resume-from detection
+# Resume from a previous run's checkpoint
+python src/pipeline.py --resume-from-dir outputs/run_20250902_165141
+
+# Force rerun of all stages
+python src/pipeline.py --force-rerun
 ```
 
 ## Configuration
@@ -207,7 +218,7 @@ filtering:
 ```yaml
 detection:
   face_detection_method: "yolo_anime"  # haar, yolo_anime
-  feature_method: "siamese"  # orb, sift, surf, siamese
+  feature_method: "siamese"            # orb, sift, surf, siamese
   similarity_threshold: 0.8
   max_faces_per_frame: 15
   save_detected_faces: true
@@ -243,33 +254,33 @@ finetuning:
 
 ### Stage 0: Siamese Network Training
 - **Input**: Character reference images
-- **Process**: Train neural network for character recognition
-- **Output**: Model weights and character embedding database
+- **Process**: Train MobileNetV2-backbone Siamese network with contrastive/triplet loss
+- **Output**: `model_weights.pth`, `character_embeddings.pkl`
 
 ### Stage 1: Frame Extraction
 - **Input**: Video files (MP4, AVI, MOV, MKV)
 - **Process**: Extract frames at uniform intervals, keyframes, or time-based sampling
-- **Output**: Frame images with metadata (timestamps, frame numbers)
+- **Output**: Frame images + `frames_metadata.json`
 
 ### Stage 2: Quality Filtering & Deduplication
-- **Input**: Extracted frame images
-- **Process**: Filter by blur, brightness, contrast; remove near-duplicates
-- **Output**: Quality-filtered unique frames
+- **Input**: Extracted frame images + metadata
+- **Process**: Laplacian blur filter, brightness/contrast filter, pHash deduplication
+- **Output**: `filtering/filtered.json`, quality-filtered frame set
 
 ### Stage 3: Character Detection
-- **Input**: Quality-filtered frames + character reference images
-- **Process**: Detect faces and identify characters
-- **Output**: Frames with character labels, face crops, bounding boxes
+- **Input**: Filtered frames + character reference images
+- **Process**: YOLOv8/Haar face detection + Siamese/feature-based character matching
+- **Output**: `detection/detected.json` with bounding boxes, confidence scores, character labels
 
 ### Stage 4: LLM Analysis
-- **Input**: Frames with detected characters
-- **Process**: Generate scene descriptions and character identification via LLM
-- **Output**: Character IDs, scene descriptions, Stable Diffusion captions
+- **Input**: Detected frames + character reference strips
+- **Process**: Composite image creation → VLM character ID + scene captioning
+- **Output**: `llm_analysis/llm_analysis.json` with character IDs, scene descriptions, SD captions
 
 ### Stage 5: LoRA Fine-tuning
-- **Input**: LLM captions and character-labeled images
-- **Process**: Train LoRA adapters for Stable Diffusion
-- **Output**: Character-specific LoRA weights for image generation
+- **Input**: LLM captions + character-labeled images
+- **Process**: Data preparation → UNet-only LoRA training (text encoder frozen)
+- **Output**: `lora_weights/final/unet/` — PEFT-compatible adapter weights
 
 ## Project Structure
 
@@ -279,121 +290,54 @@ diffusion-bunny/
 │   ├── pipeline.py          # Main pipeline orchestrator
 │   ├── stage0_siamese/      # Siamese network training
 │   ├── stage1_extraction/   # Frame extraction
-│   ├── stage2_filtering/    # Quality filtering
-│   ├── stage3_detection/    # Character detection
-│   ├── stage4_llm_analysis/ # LLM analysis and captioning
+│   ├── stage2_filtering/    # Quality filtering & deduplication
+│   ├── stage3_detection/    # Character detection (YOLOv8 + Siamese)
+│   ├── stage4_llm_analysis/ # Composite-image LLM auto-labeling
 │   └── stage5_finetuning/   # LoRA fine-tuning
-├── pipeline_data/           # Project-specific data
+├── scripts/                 # Utility scripts
+├── pipeline_data/           # Project-specific input data
 │   └── [project_name]/      # e.g., sprite/
 │       ├── movie/           # Source video files
 │       ├── frames/          # Extracted frames
 │       ├── characters/      # Character reference images
-│       ├── siamese/         # Trained Siamese models
-│       └── strip_data/      # Character reference strips
-├── outputs/                 # Pipeline run outputs
-│   └── [run_timestamp]/     # e.g., run_20250902_165141/
-│       ├── filtering/       # Quality filtering results
-│       ├── detection/       # Character detection results
-│       ├── llm_analysis/    # LLM analysis results
-│       └── lora_weights/    # Trained LoRA weights
-├── scripts/                 # Utility scripts
-├── memory-bank/             # Project documentation
-├── config.yaml             # Main configuration
+│       └── siamese/         # Trained Siamese model + embeddings
+├── outputs/                 # Pipeline run outputs (timestamped)
+│   └── run_YYYYMMDD_HHMMSS/
+│       ├── filtering/       # filtered.json
+│       ├── detection/       # detected.json + face crops
+│       ├── llm_analysis/    # llm_analysis.json + composites
+│       ├── training_data/   # DreamBooth-format dataset
+│       └── lora_weights/    # Trained LoRA adapter weights
+├── config.yaml              # Main configuration (single source of truth)
 ├── requirements.txt         # Python dependencies
-└── .env.example             # Environment variables template
+└── .env.example             # Environment variable template
 ```
 
 ## Requirements
 
 ### Hardware
-- **CPU**: Multi-core processor recommended
+- **CPU**: Multi-core processor recommended for preprocessing
 - **Memory**: 8GB+ RAM for video processing
-- **Storage**: Variable based on video size and frame extraction
-- **GPU**: Optional for fine-tuning (can use external services)
+- **Storage**: Variable based on video size and frame extraction volume
+- **GPU**: Optional for fine-tuning (pipeline designed to offload to Colab/Kaggle)
 
 ### Software
-- **Python**: 3.8+
+- **Python**: 3.10+
 - **Operating System**: Windows, Linux, macOS
-- **Dependencies**: See `requirements.txt`
 
 ### External Services
-- **OpenRouter API**: For LLM-based character identification and scene analysis (required for Stage 4)
+- **OpenRouter API**: Required for Stage 4 LLM-based character identification and captioning
 
-## Development
+## Running Tests
 
-### Running Tests
 ```bash
 pytest tests/
 ```
 
-### Code Formatting
-```bash
-black src/
-flake8 src/
-```
-
-### Type Checking
-```bash
-mypy src/
-```
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests for new functionality
-5. Run the test suite
-6. Submit a pull request
-
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## Face Detection Alternatives
-
-The project currently uses **OpenCV DNN** for face detection in Stage 3 (Character Detection). Here are the available options:
-
-### Current Implementation: OpenCV DNN
-- ✅ Already included with opencv-python
-- ✅ Fast CPU performance
-- ✅ No additional dependencies
-- ✅ Good accuracy for most use cases
-- ❌ May need separate embedding solution for character matching
-
-### Alternative Options
-
-#### MediaPipe Face Detection
-```bash
-pip install mediapipe>=0.10.0
-```
-- ✅ Modern neural network, better accuracy
-- ✅ CPU optimized
-- ✅ Includes facial landmarks
-- ❌ Larger memory footprint
-
-#### dlib + face_recognition
-```bash
-pip install dlib>=19.24.0 face_recognition>=1.3.0
-```
-- ✅ Excellent accuracy and face embeddings
-- ✅ Built-in character matching capabilities
-- ❌ Difficult installation (requires C++ compiler)
-- ❌ May fail on some systems
-
-To switch face detection methods, modify the `detection.face_detection_model` setting in `config.yaml`.
+This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.
 
 ## Acknowledgments
 
-Built with OpenCV, Hugging Face, and OpenRouter API.
-
-## Support
-
-For questions, issues, or contributions:
-- Open an issue on GitHub
-- Check the documentation in the `docs/` directory
-- Review example notebooks in `examples/`
-
----
-
-**Note**: This is a learning and exploration project that documents various approaches to CPU-based diffusion pipeline development. While not immediately successful in its original goals, it serves as a valuable resource for understanding the challenges and techniques involved in character recognition, automated labeling, and diffusion model fine-tuning on constrained hardware. Use responsibly and ensure you have appropriate rights to process video content.
+Built with OpenCV, PyTorch, Hugging Face (PEFT, diffusers, ultralytics), and OpenRouter API.
