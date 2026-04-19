@@ -500,11 +500,14 @@ class SiameseCharacterRecognizer:
             # Extract embedding for the face
             face_embedding = self.embedding_extractor.extract_embedding(face_image)
             
-            # Find best match
+            # Find best match — forward the configured similarity metric so that
+            # changing similarity_metric in config.yaml (cosine vs euclidean)
+            # actually takes effect at inference time, not just at training time.
             best_character, best_similarity = self.embedding_extractor.find_best_match(
                 query_embedding=face_embedding,
                 reference_embeddings=self.character_embeddings,
-                threshold=self.similarity_threshold
+                threshold=self.similarity_threshold,
+                metric=self.similarity_metric
             )
             
             character_matches = []

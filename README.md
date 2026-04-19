@@ -35,6 +35,10 @@ Traditional feature descriptors fail on anime-style art because: (1) stylized fa
 
 Sending raw frames to a VLM risks hallucinated character names — the model may identify characters it "knows" from its training data rather than from the actual reference set. Compositing detected face crops alongside a visual reference strip of candidate characters grounds the identification problem: the LLM is explicitly shown who the candidates are and asked to match, not freely identify. This is a constrained visual comparison task rather than open-ended recognition, which substantially reduces hallucination on domain-specific characters.
 
+**Why run both Siamese recognition (Stage 3) and LLM recognition (Stage 4)?**
+
+They are sequential, not alternatives, and they don't do the same job. Stage 3 does two things: (1) detect face locations via YOLOv8 and (2) attempt a fast, offline character identity match via Siamese embeddings. Stage 4 takes those face crops and independently re-identifies characters using the LLM with a reference strip — and, critically, also generates the Stable Diffusion training captions that Stage 5 needs. The Siamese output is preserved alongside the LLM output for comparison, but the LLM identification is what becomes the training label. The Siamese is not a prerequisite for Stage 4 to work — Stage 4 would function with just the face locations from YOLOv8. What Siamese adds is a cheap, immediate first-pass identity signal that runs without an API call, useful for inspection and for cases where LLM access isn't available.
+
 **Why LoRA on UNet only (frozen text encoder)?**
 
 With ~65 training frames, fine-tuning the text encoder risks catastrophic forgetting — the model may corrupt its learned concept space for common tokens. Rank-8 UNet LoRA targeting attention layers gives character-specific weight updates at minimal parameter cost (~3M trainable vs ~860M base), sufficient for style anchoring with a small dataset. The text encoder is intentionally left frozen to preserve compositional generation capability.
